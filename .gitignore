@@ -1,0 +1,31 @@
+# ROS 2
+build/
+install/
+log/
+colcon.meta
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Compiled
+*.so
+*.a
+*.o
+
+# Bags
+*.bag
+*.db3

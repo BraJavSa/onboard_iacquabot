@@ -1,0 +1,70 @@
+# Simplified configuration for PX4 autopilot (Basic Telemetry & TF)
+#
+/**:
+  ros__parameters:
+    startup_px4_usb_quirk: false
+
+# --- system plugins ---
+
+/**/sys_status:
+  ros__parameters:
+    min_voltage: [10.0]
+    disable_diag: false
+    heartbeat_rate: 1.0
+    conn_timeout: 10.0
+
+/**/sys_time:
+  ros__parameters:
+    time_ref_source: "fcu"
+    timesync_mode: MAVLINK
+    timesync_avg_alpha: 0.6
+    timesync_rate: 10.0
+    system_time_rate: 1.0
+    fcu_datetime_fallback: true
+
+# --- mavros plugins ---
+
+/**/command:
+  ros__parameters:
+    use_comp_id_system_control: false
+
+/**/global_position:
+  ros__parameters:
+    frame_id: "map"
+    child_frame_id: "base_link"
+    rot_covariance: 99999.0
+    gps_uere: 1.0
+    use_relative_alt: true
+    tf.send: true
+    tf.frame_id: "map"
+    tf.global_frame_id: "earth"
+    tf.child_frame_id: "base_link"
+
+/**/imu:
+  ros__parameters:
+    frame_id: "base_link"
+    linear_acceleration_stdev: 0.0003
+    angular_velocity_stdev: 0.0003490659
+    orientation_stdev: 1.0
+    magnetic_stdev: 0.0
+
+/**/local_position:
+  ros__parameters:
+    frame_id: "map"
+    tf.send: true
+    tf.frame_id: "map"
+    tf.child_frame_id: "base_link"
+    tf.send_fcu: false
+
+/**/setpoint_position:
+  ros__parameters:
+    tf.listen: false
+    tf.frame_id: "map"
+    tf.child_frame_id: "target_position"
+    tf.rate_limit: 50.0
+    mav_frame: LOCAL_NED
+
+/**/mission:
+  ros__parameters:
+    pull_after_gcs: true
+    use_mission_item_int: true
