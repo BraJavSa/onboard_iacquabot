@@ -28,6 +28,7 @@ ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
   src/python_nodes/boadpx4.py
+  src/python_nodes/motor_calibrator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
