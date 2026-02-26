@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import socket, threading, time, math
+import socket
+import threading
+import time
+import math
+import subprocess
+import re
 import pynmea2
 import rclpy
 from rclpy.node import Node
@@ -9,22 +14,20 @@ from std_msgs.msg import String, Float32, Float64, Int32
 from sensor_msgs.msg import NavSatFix, NavSatStatus, TimeReference
 from geometry_msgs.msg import TwistStamped
 
-
 KNOT_TO_MPS = 0.514444
 NM_TO_M = 1852.0
-
 
 class NmeaTcpBridge(Node):
     def __init__(self):
         super().__init__('nmea_tcp_bridge')
 
-        # Parámetros
-        self.declare_parameter('host', '10.42.0.1')
+        # Parámetros configurables
+        self.declare_parameter('target_mac', '60:e8:5b:a1:c7:5b')
         self.declare_parameter('port', 10110)
         self.declare_parameter('frame_id', 'gps')
-        self.declare_parameter('reconnect_seconds', 3.0)
+        self.declare_parameter('reconnect_seconds', 5.0)
 
-        self.host = self.get_parameter('host').value
+        self.target_mac = self.get_parameter('target_mac').value.lower()
         self.port = self.get_parameter('port').value
         self.frame_id = self.get_parameter('frame_id').value
         self.reconnect_seconds = float(self.get_parameter('reconnect_seconds').value)
@@ -50,47 +53,70 @@ class NmeaTcpBridge(Node):
         self.pub_odo_total = self.create_publisher(Float64, '/lowrance/odo/water_total_m', 5)
         self.pub_odo_trip = self.create_publisher(Float64, '/lowrance/odo/water_trip_m', 5)
 
-        # Thread lector
+        # Thread de gestión de conexión
         self._stop = threading.Event()
         threading.Thread(target=self._reader_loop, daemon=True).start()
-        self.get_logger().info(f'Conectando a NMEA TCP {self.host}:{self.port}')
+        self.get_logger().info(f'Nodo iniciado. Buscando MAC: {self.target_mac}')
 
-    # ---------- bucle TCP ----------
+    def get_ip_from_mac(self, mac):
+        """Escanea la tabla ARP del sistema para encontrar la IP asociada a la MAC."""
+        try:
+            output = subprocess.check_output(['arp', '-n'], stderr=subprocess.DEVNULL).decode()
+            # Expresión regular para extraer IP basada en la MAC
+            pattern = r'(\d+\.\d+\.\d+\.\d+).*' + re.escape(mac)
+            match = re.search(pattern, output, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        except Exception as e:
+            self.get_logger().error(f'Error al consultar tabla ARP: {e}')
+        return None
+
     def _reader_loop(self):
+        """Bucle principal de conexión y lectura."""
         while not self._stop.is_set():
+            current_ip = self.get_ip_from_mac(self.target_mac)
+            
+            if not current_ip:
+                self.get_logger().warn(f'Dispositivo {self.target_mac} no detectado en ARP. Reintentando...')
+                time.sleep(self.reconnect_seconds)
+                continue
+
             sock = None
             try:
-                sock = socket.create_connection((self.host, self.port), timeout=10.0)
+                self.get_logger().info(f'Conectando a {current_ip}:{self.port} (MAC: {self.target_mac})')
+                sock = socket.create_connection((current_ip, self.port), timeout=10.0)
                 f = sock.makefile('r', encoding='ascii', errors='ignore')
-                self.get_logger().info(f'Conectado a {self.host}:{self.port}')
+                self.get_logger().info(f'Conexión establecida con Lowrance en {current_ip}')
+                
                 for line in f:
                     if self._stop.is_set(): break
                     line = line.strip()
                     if not line: continue
                     self._handle_sentence(line)
             except Exception as e:
-                self.get_logger().warn(f'Error {e}; reintento en {self.reconnect_seconds}s')
+                self.get_logger().warn(f'Error de conexión: {e}. Reintentando en {self.reconnect_seconds}s')
                 time.sleep(self.reconnect_seconds)
             finally:
-                if sock: sock.close()
+                if sock:
+                    sock.close()
 
     def destroy_node(self):
         self._stop.set()
-        return super().destroy_node()
+        super().destroy_node()
 
-    # ---------- parseo y publicación ----------
     def _handle_sentence(self, sentence: str):
+        """Parsea las sentencias NMEA y publica en los tópicos correspondientes."""
         self.pub_raw.publish(String(data=sentence))
         try:
             msg = pynmea2.parse(sentence, check=True)
             stype = msg.sentence_type.upper()
-        except Exception:
+        except:
             return
 
         header = self.get_clock().now().to_msg()
 
-        # GPS fixes
-        if stype == 'GLL' or stype == 'RMC':
+        # GPS Fixes (GLL, RMC)
+        if stype in ['GLL', 'RMC']:
             fix = NavSatFix()
             fix.header.stamp = header
             fix.header.frame_id = self.frame_id
@@ -98,67 +124,62 @@ class NmeaTcpBridge(Node):
             try:
                 fix.latitude = float(msg.latitude)
                 fix.longitude = float(msg.longitude)
+                self.pub_fix.publish(fix)
             except: pass
-            fix.altitude = 0.0
-            self.pub_fix.publish(fix)
 
-        # Velocidad COG/SOG
+        # Velocidad y Rumbo sobre el fondo (VTG)
         if stype == 'VTG':
             tw = TwistStamped()
             tw.header.stamp = header
             tw.header.frame_id = self.frame_id
             try:
                 tw.twist.linear.x = float(msg.spd_over_grnd_kts) * KNOT_TO_MPS
-            except: pass
-            try:
                 tw.twist.angular.z = math.radians(float(msg.true_track))
+                self.pub_vel.publish(tw)
             except: pass
-            self.pub_vel.publish(tw)
 
-        # HDG
+        # Rumbo (HDG, THS)
         if stype == 'HDG':
             try:
                 self.pub_hdg_mag.publish(Float64(data=float(msg.heading)))
             except: pass
-
-        # THS (no siempre soportado por pynmea2)
+        
         if stype == 'THS':
             try:
                 self.pub_hdg_true.publish(Float64(data=float(msg.heading)))
             except: pass
 
-        # DPT / DBT
+        # Profundidad (DPT, DBT)
         if stype == 'DPT':
             try:
                 self.pub_depth.publish(Float32(data=float(msg.depth)))
             except: pass
-        if stype == 'DBT':
+        elif stype == 'DBT':
             try:
                 self.pub_depth.publish(Float32(data=float(msg.meters)))
             except: pass
 
-        # MTW
+        # Temperatura del agua (MTW)
         if stype == 'MTW':
             try:
                 self.pub_temp.publish(Float32(data=float(msg.temperature)))
             except: pass
 
-        # VHW
+        # Velocidad en el agua (VHW)
         if stype == 'VHW':
             try:
                 self.pub_water_speed.publish(Float32(data=float(msg.spd_knots) * KNOT_TO_MPS))
             except: pass
 
-        # VLW
+        # Odometría (VLW)
         if stype == 'VLW':
             try:
                 self.pub_odo_total.publish(Float64(data=float(msg.total_cum_dist) * NM_TO_M))
                 self.pub_odo_trip.publish(Float64(data=float(msg.trip_dist) * NM_TO_M))
             except: pass
 
-
-def main():
-    rclpy.init()
+def main(args=None):
+    rclpy.init(args=args)
     node = NmeaTcpBridge()
     try:
         rclpy.spin(node)
@@ -167,7 +188,6 @@ def main():
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
