@@ -7,7 +7,7 @@ from std_msgs.msg import UInt16MultiArray
 PWM_MIN  = 1100
 PWM_MID  = 1500
 PWM_MAX  = 1900
-DEADZONE = 30
+DEADZONE = 0.03  # normalizado, equivale a ~30 en escala 1000
 
 MOTOR_FL = 1
 MOTOR_FR = 3
@@ -39,11 +39,10 @@ class PWMController(Node):
         self.get_logger().info(f'FL={MOTOR_FL} FR={MOTOR_FR} BL={MOTOR_BL} BR={MOTOR_BR}')
         self.get_logger().info(f'Invertidos: {MOTOR_INVERTED}')
 
-    def manual_to_float(self, val):
-        """Convierte -1000..1000 a float -1..1 con deadzone"""
+    def apply_deadzone(self, val):
         if abs(val) < DEADZONE:
             return 0.0
-        return max(-1.0, min(1.0, val / 1000.0))
+        return max(-1.0, min(1.0, val))
 
     def float_to_us(self, val):
         val = max(-1.0, min(1.0, val))
@@ -59,10 +58,8 @@ class PWMController(Node):
     def cb_manual(self, msg):
         if not self.armed or not self.manual:
             return
-        # z viene 0..1000, centramos en 500 y escalamos a -1000..1000
-        z_centered = (msg.z - 500) * 2
-        self.linear  = self.manual_to_float(z_centered)
-        self.angular = self.manual_to_float(msg.r)
+        self.linear  = self.apply_deadzone(msg.z)   # throttle bidireccional
+        self.angular = self.apply_deadzone(msg.y)   # giro
 
     def apply_inversion(self, motor_idx, value_float):
         if MOTOR_INVERTED[motor_idx]:
