@@ -19,7 +19,7 @@ class NmeaTcpBridge(Node):
         super().__init__('nmea_tcp_bridge')
 
         # Parámetros
-        self.declare_parameter('host', '192.168.88.124')
+        self.declare_parameter('host', '10.42.0.1')
         self.declare_parameter('port', 10110)
         self.declare_parameter('frame_id', 'gps')
         self.declare_parameter('reconnect_seconds', 3.0)
