@@ -1,43 +1,23 @@
-/**:
+# ============================================================
+# MAVROS px4_pluginlists.yaml
+# Target  : PX4 v1.12.3 / v1.15 - FMU v2/v5
+# ROS     : ROS 2 Jazzy + MAVROS
+# FIX     : Namespace apuntando al nodo raiz /mavros
+# ============================================================
+
+/mavros:
   ros__parameters:
     plugin_denylist:
-      - image_pub
-      - vibration
       - distance_sensor
       - rangefinder
-      - wheel_odometry
-      - vision_pose
-      - vision_speed
       - optical_flow
+      - image_pub
+      - wheel_odometry
       - fake_gps
+      - actuator_control
+      - rc_io
+      - vibration
       - landing_target
-      - mocap_pose_estimate
-      - cam_imu_sync
       - obstacle_distance
-      - obstacle_distance_3d
-      - guided_target
-      - onboard_computer_status
-      - open_drone_id
-      - sim_state
-      - trajectory
-      - tunnel
-      - gps_rtk
-      - geofence
-      - rallypoint
-      - log_transfer
-      - mag_calibration_status
-      - play_tune
-      - px4flow
+      - terrain
       - wind_estimation
-      - esc_status
-      - esc_telemetry
-      - debug_value
-      - companion_process_status
-      - cellular_status
-      - adsb
-      - setpoint_trajectory
-      - nav_controller_output
-      - mount_control
-      - ftp
-      - tunnel
-      - sys_time
