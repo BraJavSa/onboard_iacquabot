@@ -33,12 +33,6 @@ def generate_launch_description():
         output='screen'
     )
 
-    lowrance_node = Node(
-        package='onboard_iacquabot',
-        executable='lowrance.py',
-        output='screen'
-    )
-
     rc_control_node = Node(
         package='onboard_iacquabot',
         executable='rc_control_px4.py',
@@ -49,6 +43,5 @@ def generate_launch_description():
         mavros_node,
         micro_ros_agent,
         odomtotf_node,
-        lowrance_node,
         rc_control_node
     ])

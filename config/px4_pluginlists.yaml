@@ -1,23 +1,31 @@
-# ============================================================
-# MAVROS px4_pluginlists.yaml
-# Target  : PX4 v1.12.3 / v1.15 - FMU v2/v5
-# ROS     : ROS 2 Jazzy + MAVROS
-# FIX     : Namespace apuntando al nodo raiz /mavros
-# ============================================================
-
-/mavros:
+mavros_node:  # Cambiado de /mavros a mavros_node
   ros__parameters:
-    plugin_denylist:
+    plugin_deny_list:  # Usa el guion bajo para asegurar compatibilidad
+      - adsb
+      - camera
+      - cellular_status
+      - companion_process_status
       - distance_sensor
-      - rangefinder
-      - optical_flow
-      - image_pub
-      - wheel_odometry
       - fake_gps
-      - actuator_control
-      - rc_io
-      - vibration
+      - gimbal_control
       - landing_target
+      - log_transfer
+      - mag_calibration_status
+      - mount_control
+      - nav_controller_output
       - obstacle_distance
+      - obstacle_distance_3d
+      - onboard_computer_status
+      - open_drone_id
+      - optical_flow
+      - play_tune
+      - px4flow
+      - rallypoint
+      - rangefinder
       - terrain
+      - tunnel
+      - vibration
+      - vision_pose_estimate
+      - vision_speed_estimate
+      - wheel_odometry
       - wind_estimation
