@@ -32,6 +32,7 @@ install(PROGRAMS
   src/python_nodes/motor_calibrator.py
   src/python_nodes/lowrance.py
   src/python_nodes/odomtotf.py
+  src/python_nodes/joy_to_safe_joy.py
 
   DESTINATION lib/${PROJECT_NAME}
 )
