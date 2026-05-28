@@ -85,7 +85,7 @@ class PWMController(Node):
 
         if len(msg.axes) >= 2:
             self.joy_linear  = msg.axes[1]
-            self.joy_angular = msg.axes[0]
+            self.joy_angular = -msg.axes[2]
 
     def apply_inversion(self, motor_idx, value_float):
         if MOTOR_INVERTED[motor_idx]:

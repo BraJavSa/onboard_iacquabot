@@ -27,7 +27,6 @@ ament_python_install_package(${PROJECT_NAME})
 
 
 install(PROGRAMS
-  src/python_nodes/joy_control_px4.py
   src/python_nodes/rc_control_px4.py
   src/python_nodes/motor_calibrator.py
   src/python_nodes/lowrance.py
