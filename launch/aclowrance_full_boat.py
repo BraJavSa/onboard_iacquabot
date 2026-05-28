@@ -12,7 +12,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {
-                'fcu_url': '/dev/ttyACM0:57600',
+                'fcu_url': '/dev/ttyACM1:57600',
                 'gcs_url': 'udp://@brayan-Victus.local:14550',
             },
             os.path.join(pkg_share, 'config', 'px4_pluginlists.yaml'),
@@ -33,8 +33,15 @@ def generate_launch_description():
         output='screen'
     )
 
+    lowrance_node = Node(
+        package='onboard_iacquabot',
+        executable='lowrance.py',
+        output='screen'
+    )
+
     return LaunchDescription([
         mavros_node,
         odomtotf_node,
-        rc_control_node
+        rc_control_node,
+        lowrance_node,
     ])

@@ -27,6 +27,10 @@ python3 -c "import serial; import time; s=serial.Serial('/dev/ttyUSB0'); s.dtr=F
 ros2 run onboard_iacquabot odomtotf.py 
 
 
+ros2 launch onboard_iacquabot safe_joy.launch.py
+
+
+
 
 ros2 run joy joy_node
 

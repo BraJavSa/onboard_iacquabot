@@ -20,12 +20,6 @@ def generate_launch_description():
         ]
     )
 
-    micro_ros_agent = Node(
-        package='micro_ros_agent',
-        executable='micro_ros_agent',
-        arguments=['serial', '--dev', '/dev/ttyUSB0', '-b', '115200'],
-        output='screen'
-    )
 
     odomtotf_node = Node(
         package='onboard_iacquabot',
@@ -39,9 +33,15 @@ def generate_launch_description():
         output='screen'
     )
 
+    lowrance_node = Node(
+        package='onboard_iacquabot',
+        executable='lowrance.py',
+        output='screen'
+    )
+
     return LaunchDescription([
         mavros_node,
-        micro_ros_agent,
         odomtotf_node,
-        rc_control_node
+        rc_control_node,
+        lowrance_node,
     ])
