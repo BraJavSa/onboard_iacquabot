@@ -8,15 +8,22 @@ from std_msgs.msg import UInt16MultiArray
 PWM_MIN  = 1100
 PWM_MID  = 1500
 PWM_MAX  = 1900
-RC_MIN   = 1000
-RC_MAX   = 2000
-RC_MID   = 1500
+
+# Valores calibrados de la radio
+RC_LINEAR_MIN  = 1105
+RC_LINEAR_MID  = 1496
+RC_LINEAR_MAX  = 1894
+
+RC_ANGULAR_MIN = 1098
+RC_ANGULAR_MID = 1500
+RC_ANGULAR_MAX = 1901
+
 DEADZONE = 30
 
-MOTOR_FL = 1   
-MOTOR_FR = 3   
-MOTOR_BL = 0   
-MOTOR_BR = 2   
+MOTOR_FL = 1
+MOTOR_FR = 3
+MOTOR_BL = 0
+MOTOR_BR = 2
 
 MOTOR_INVERTED = [True, True, False, False]
 
@@ -51,15 +58,15 @@ class PWMController(Node):
 
         self.create_timer(0.02, self.control_loop)
 
-    def rc_to_float(self, raw):
-        raw = max(RC_MIN, min(RC_MAX, int(raw)))
-        centered = raw - RC_MID
+    def rc_to_float(self, raw, rc_min, rc_mid, rc_max):
+        raw = max(rc_min, min(rc_max, int(raw)))
+        centered = raw - rc_mid
         if abs(centered) < DEADZONE:
             return 0.0
         if centered > 0:
-            return (centered - DEADZONE) / (RC_MAX - RC_MID - DEADZONE)
+            return (centered - DEADZONE) / (rc_max - rc_mid - DEADZONE)
         else:
-            return (centered + DEADZONE) / (RC_MID - RC_MIN - DEADZONE)
+            return (centered + DEADZONE) / (rc_mid - rc_min - DEADZONE)
 
     def float_to_us(self, val):
         val = max(-1.0, min(1.0, val))
@@ -77,8 +84,10 @@ class PWMController(Node):
         self.last_rc_time = self.get_clock().now()
 
         if len(msg.channels) > 3:
-            self.linear  = self.rc_to_float(msg.channels[1])
-            self.angular = self.rc_to_float(msg.channels[3])
+            self.linear  = self.rc_to_float(
+                msg.channels[1], RC_LINEAR_MIN, RC_LINEAR_MID, RC_LINEAR_MAX)
+            self.angular = self.rc_to_float(
+                msg.channels[3], RC_ANGULAR_MIN, RC_ANGULAR_MID, RC_ANGULAR_MAX)
 
     def cb_joy(self, msg):
         self.last_joy_time = self.get_clock().now()
@@ -103,7 +112,6 @@ class PWMController(Node):
         rc_alive  = dt_rc  < self.rc_timeout_sec
         joy_alive = dt_joy < self.joy_timeout_sec
 
-        # 🔥 lógica correcta
         if self.armed and self.manual and rc_alive:
             linear  = self.linear
             angular = self.angular
