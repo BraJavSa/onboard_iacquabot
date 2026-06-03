@@ -6,7 +6,7 @@ python3 -c "import serial; import time; s=serial.Serial('/dev/ttyUSB0'); s.dtr=F
 
 ros2 launch onboard_iacquabot safe_joy.launch.py
 
-
+ros2 bag record -a --exclude-regex "/bebop/camera.*" -o nombre_del_bag
 
 ros2 run mavros mavros_node --ros-args \
   --param fcu_url:="/dev/ttyACM0:57600" \
