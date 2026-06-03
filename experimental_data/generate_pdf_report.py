@@ -3,9 +3,9 @@ model_validation_report.py
 ===========================
 Generates a multi-page PDF report with one page per experiment (up to 10),
 each showing measured vs. simulated velocities (u, v, r) with error shading
-and RMS values, using the Fossen 3-DOF vessel model.
+and RMS/R²/MAE values, using the Fossen 3-DOF vessel model.
 
-The PDF filename is derived from the experiment files found in --data-dir.
+Metrics (RMS, R², MAE) are also saved to a JSON file alongside the PDF.
 
 ─────────────────────────────────────────────────────────────────────────────
 LANGUAGE SETTING  ← change here
@@ -45,6 +45,26 @@ except ImportError:
         "Make sure model_validation_utils.py is on PYTHONPATH or in the same directory."
     )
     sys.exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Metrics
+# ═══════════════════════════════════════════════════════════════════════════
+
+def mae(y_meas: np.ndarray, y_sim: np.ndarray) -> float:
+    """Mean Absolute Error."""
+    return float(np.mean(np.abs(np.asarray(y_meas) - np.asarray(y_sim))))
+
+
+def r2(y_meas: np.ndarray, y_sim: np.ndarray) -> float:
+    """Coefficient of determination R²."""
+    y_meas = np.asarray(y_meas)
+    y_sim  = np.asarray(y_sim)
+    ss_res = np.sum((y_meas - y_sim) ** 2)
+    ss_tot = np.sum((y_meas - np.mean(y_meas)) ** 2)
+    if ss_tot == 0.0:
+        return 1.0 if ss_res == 0.0 else 0.0
+    return float(1.0 - ss_res / ss_tot)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -174,7 +194,10 @@ def make_page(ds, u_hat, v_hat, r_hat, exp_name: str, lang: str) -> plt.Figure:
 
     for row, (key, y_meas, y_sim) in enumerate(signals):
         ax = fig.add_subplot(gs[row])
+
         rms_val = rms(y_meas, y_sim)
+        mae_val = mae(y_meas, y_sim)
+        r2_val  = r2(y_meas, y_sim)
 
         # error shading
         ax.fill_between(
@@ -206,20 +229,22 @@ def make_page(ds, u_hat, v_hat, r_hat, exp_name: str, lang: str) -> plt.Figure:
         else:
             ax.set_xlabel(S["time_label"], labelpad=3)
 
-        # legend
+        # legend — now includes RMS, MAE and R²
         err_patch = mpatches.Patch(
             facecolor=COLOR_FILL, alpha=0.6,
             edgecolor="none", label=S["error_region"],
         )
-        rms_handle = mpatches.Patch(
-            visible=False, label=f"RMS = {rms_val:.4f}",
+        metrics_handle = mpatches.Patch(
+            visible=False,
+            label=f"RMS={rms_val:.4f}  MAE={mae_val:.4f}  R²={r2_val:.4f}",
         )
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(
-            handles + [err_patch, rms_handle],
-            labels  + [S["error_region"], f"RMS = {rms_val:.4f}"],
+            handles + [err_patch, metrics_handle],
+            labels  + [S["error_region"],
+                       f"RMS={rms_val:.4f}  MAE={mae_val:.4f}  R²={r2_val:.4f}"],
             loc="upper right",
-            fontsize=7.5,
+            fontsize=7,
             handlelength=2.0,
             borderpad=0.5,
             labelspacing=0.3,
@@ -227,6 +252,78 @@ def make_page(ds, u_hat, v_hat, r_hat, exp_name: str, lang: str) -> plt.Figure:
         )
 
     return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Metrics JSON
+# ═══════════════════════════════════════════════════════════════════════════
+
+def build_metrics_entry(
+    exp_name: str,
+    ds: dict,
+    u_hat: np.ndarray,
+    v_hat: np.ndarray,
+    r_hat: np.ndarray,
+) -> dict:
+    """
+    Build a dict with RMS, MAE and R² for u, v, r plus overall averages.
+
+    Structure
+    ---------
+    {
+        "experiment": "experiment_01",
+        "u": {"RMS": …, "MAE": …, "R2": …},
+        "v": {"RMS": …, "MAE": …, "R2": …},
+        "r": {"RMS": …, "MAE": …, "R2": …},
+        "mean": {"RMS": …, "MAE": …, "R2": …}
+    }
+    """
+    channels = {
+        "u": (ds["u"], u_hat),
+        "v": (ds["v"], v_hat),
+        "r": (ds["r"], r_hat),
+    }
+
+    entry = {"experiment": exp_name}
+    rms_vals, mae_vals, r2_vals = [], [], []
+
+    for ch, (y_meas, y_sim) in channels.items():
+        rms_v = rms(y_meas, y_sim)
+        mae_v = mae(y_meas, y_sim)
+        r2_v  = r2(y_meas, y_sim)
+
+        entry[ch] = {
+            "RMS": round(rms_v, 6),
+            "MAE": round(mae_v, 6),
+            "R2":  round(r2_v,  6),
+        }
+        rms_vals.append(rms_v)
+        mae_vals.append(mae_v)
+        r2_vals.append(r2_v)
+
+    entry["mean"] = {
+        "RMS": round(float(np.mean(rms_vals)), 6),
+        "MAE": round(float(np.mean(mae_vals)), 6),
+        "R2":  round(float(np.mean(r2_vals)),  6),
+    }
+
+    return entry
+
+
+def save_metrics_json(metrics: list[dict], json_path: str) -> None:
+    """Write the list of per-experiment metrics dicts to *json_path*."""
+    payload = {
+        "experiments": metrics,
+        # convenient global summary across all experiments
+        "global_mean": {
+            "RMS": round(float(np.mean([e["mean"]["RMS"] for e in metrics])), 6),
+            "MAE": round(float(np.mean([e["mean"]["MAE"] for e in metrics])), 6),
+            "R2":  round(float(np.mean([e["mean"]["R2"]  for e in metrics])), 6),
+        },
+    }
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    print(f"Metrics saved to: {json_path}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -240,8 +337,14 @@ def parse_args():
     parser.add_argument("--data-dir",     default=os.path.dirname(os.path.abspath(__file__)))
     parser.add_argument("--dynamic-json", default=None)
     parser.add_argument("--motor-json",   default=None)
-    parser.add_argument("--output",       default=None,
-                        help="Output PDF path (default: <data-dir>/<exp_prefix>_validation.pdf)")
+    parser.add_argument(
+        "--output", default=None,
+        help="Output PDF path (default: <data-dir>/<exp_prefix>_validation.pdf)",
+    )
+    parser.add_argument(
+        "--metrics-json", default=None,
+        help="Output JSON path for metrics (default: same stem as PDF with .json extension).",
+    )
     parser.add_argument("--fast",  action="store_true",
                         help="Use Euler integrator instead of RK45.")
     parser.add_argument("--language", default=None, choices=["en", "es"],
@@ -286,16 +389,22 @@ def main():
 
     print(f"Found {len(exp_paths)} experiment(s). Language: {lang}.")
 
-    # Output PDF name derived from the experiment set
+    # ── Output paths ──────────────────────────────────────────────────────
     if args.output:
         pdf_path = args.output
     else:
         first_name = os.path.splitext(os.path.basename(exp_paths[0]))[0]
-        # e.g.  experiment_01_validation.pdf
-        prefix = first_name.replace("_01", "")   # → "experiment"
-        pdf_path = os.path.join(args.data_dir, f"{prefix}_validation.pdf")
+        prefix     = first_name.replace("_01", "")          # → "experiment"
+        pdf_path   = os.path.join(args.data_dir, f"{prefix}_validation.pdf")
 
+    if args.metrics_json:
+        json_path = args.metrics_json
+    else:
+        json_path = os.path.splitext(pdf_path)[0] + "_metrics.json"
+
+    # ── Generate report ───────────────────────────────────────────────────
     apply_article_style()
+    all_metrics: list[dict] = []
 
     with PdfPages(pdf_path) as pdf:
         for exp_path in exp_paths:
@@ -304,17 +413,26 @@ def main():
 
             try:
                 ds = load_experiment(exp_path)
-                u_hat, v_hat, r_hat = simulate_experiment(ds, dynamic, motor, fast=args.fast)
+                u_hat, v_hat, r_hat = simulate_experiment(
+                    ds, dynamic, motor, fast=args.fast
+                )
+
+                # ── collect metrics ──────────────────────────────────────
+                entry = build_metrics_entry(exp_name, ds, u_hat, v_hat, r_hat)
+                all_metrics.append(entry)
+
+                # ── PDF page ─────────────────────────────────────────────
                 fig = make_page(ds, u_hat, v_hat, r_hat, exp_name, lang)
                 pdf.savefig(fig, dpi=300, bbox_inches="tight", facecolor="white")
                 plt.close(fig)
 
-                # console RMS summary
-                for key, ym, ys in [("u", ds["u"], u_hat),
-                                     ("v", ds["v"], v_hat),
-                                     ("r", ds["r"], r_hat)]:
-                    pass   # already shown in figure; omit repetition here
-                print("done")
+                # console summary
+                print(
+                    f"done  "
+                    f"[u RMS={entry['u']['RMS']:.4f}  "
+                    f"v RMS={entry['v']['RMS']:.4f}  "
+                    f"r RMS={entry['r']['RMS']:.4f}]"
+                )
 
             except Exception as e:
                 print(f"FAILED ({e})")
@@ -326,6 +444,10 @@ def main():
         d["Subject"] = "Vessel system identification — output-error method"
 
     print(f"\nReport saved to: {pdf_path}")
+
+    # ── Save metrics JSON ─────────────────────────────────────────────────
+    if all_metrics:
+        save_metrics_json(all_metrics, json_path)
 
 
 if __name__ == "__main__":
