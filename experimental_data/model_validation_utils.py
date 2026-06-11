@@ -101,6 +101,9 @@ def simulate_experiment(experiment, dynamic, motor, fast=False):
             -dynamic["m11"] * u_ * r_
             - dynamic["Yv"] * v_
             - dynamic["Yvv"] * abs(v_) * v_
+            - dynamic.get("Yr", 0.0) * r_
+            - dynamic.get("Yrr", 0.0) * abs(r_) * r_
+            - dynamic.get("Yur", 0.0) * u_ * r_
         ) / dynamic["m22"]
         dr = (
             taur
