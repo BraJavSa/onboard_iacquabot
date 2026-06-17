@@ -253,8 +253,8 @@ def main():
     
     # Límites físicos para evitar inestabilidad (m11, m22, m33, Xu, Yv, Nr >= 1.0; Xuu, Yvv, Nrr >= 0.0)
     # Yr, Yrr, Yur son acoplamientos y pueden ser positivos o negativos.
-    lb = [200.0, 400.0, 50.0, 1.0, 50.0, 300.0, 10.0, 40.0, 20.0, -200.0, -100.0, -200.0]
-    ub = [350.0, 600.0, 100.0, 50.0, 150.0, 700.0, 200.0, 120.0, 150.0, 200.0, 100.0, 200.0]
+    lb = [20.0, 20.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1000.0, -1000.0, -1000.0]
+    ub = [400.0, 500.0, 120.0, 300.0, 500.0, 700.0, 300.0, 250.0, 120.0, 1000.0, 1000.0, 1000.0]
     
     res = lsq_linear(Phi_global, Tau_global, bounds=(lb, ub))
     theta = res.x
