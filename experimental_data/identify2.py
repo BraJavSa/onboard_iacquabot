@@ -212,8 +212,8 @@ def main():
             # Construir el regresor acoplado para este experimento
             Phi_exp, Tau_exp = build_global_phi_tau(acc_u, acc_v, acc_r, u, v, r, Tu_arr, Tr_arr)
             
-            # Excluimos experiment_01.mat de la regresión conjunta por ser solo ruido
-            if mat_file != "experiment_01.mat":
+            # Excluimos experiment_01.mat y experiment_02.mat de la regresión conjunta
+            if mat_file not in ["experiment_01.mat", "experiment_02.mat"]:
                 Phi_global.append(Phi_exp)
                 Tau_global.append(Tau_exp)
             
@@ -240,7 +240,7 @@ def main():
     Phi_global = np.vstack(Phi_global)
     Tau_global = np.concatenate(Tau_global)
     
-    print(f"\nTamaño de la matriz de Regresión Global Phi (excluyendo exp_01): {Phi_global.shape}")
+    print(f"\nTamaño de la matriz de Regresión Global Phi (excluyendo exp_01 y exp_02): {Phi_global.shape}")
     print("--- Ejecutando Mínimos Cuadrados Globales (OLS) ---")
     
     # Inversión de matriz OLS (theta = Phi \ Tau)
