@@ -92,13 +92,13 @@ def build_global_phi_tau(acc_u, acc_v, acc_r, u, v, r, Tu, Tr):
         
         # ---- Fila Sway (Ecuación 2) ----
         row_v = np.zeros(12)
-        row_v[0] = u[k] * r[k]       # m - Xdu (Coriolis)
+        row_v[0] = 0.0               # Se elimina el término Coriolis separado para evitar colinealidad exacta con Yur
         row_v[1] = acc_v[k]          # m - Ydv (Inercia)
         row_v[5] = v[k]              # Yv (Damp lineal)
         row_v[6] = abs(v[k]) * v[k]  # Yvv (Damp cuadrático)
         row_v[9] = r[k]              # Yr (Coupling lineal yaw)
         row_v[10] = abs(r[k]) * r[k] # Yrr (Coupling cuadrático yaw)
-        row_v[11] = u[k] * r[k]      # Yur (Coupling surge-yaw)
+        row_v[11] = u[k] * r[k]      # Yur (Coupling neto que engloba Coriolis y Yur)
         Phi_list.append(row_v)
         Tau_list.append(0.0)         # Tv es fijos en 0 por diseño
         
@@ -130,7 +130,7 @@ def simulate_vessel(t, u, v, r, Tu, Tr, theta):
         
         # Modelo 3DOF Fossen acoplado con términos de acoplamiento en sway (v)
         du = (tau_u + m22 * v_ * r_ - Xu * u_ - Xuu * abs(u_) * u_) / m11
-        dv = (-m11 * u_ * r_ - Yv * v_ - Yvv * abs(v_) * v_ - Yr * r_ - Yrr * abs(r_) * r_ - Yur * u_ * r_) / m22
+        dv = (-Yv * v_ - Yvv * abs(v_) * v_ - Yr * r_ - Yrr * abs(r_) * r_ - Yur * u_ * r_) / m22
         dr = (tau_r - Nr * r_ - Nrr * abs(r_) * r_) / m33
         
         return [du, dv, dr]
@@ -184,10 +184,10 @@ def main():
             r_raw = mat_data["wz"].flatten()
             
             # Filtro Savitzky-Golay para limpiar el ruido del sensor a 30Hz sin desfasar el tiempo
-            # Ajustamos una ventana de 11 muestras y polinomio de grado 2
-            u = savgol_filter(u_raw, 11, 2)
-            v = savgol_filter(v_raw, 11, 2)
-            r = savgol_filter(r_raw, 11, 2)
+            # Ajustamos una ventana de 25 muestras y polinomio de grado 2
+            u = savgol_filter(u_raw, 25, 2)
+            v = savgol_filter(v_raw, 25, 2)
+            r = savgol_filter(r_raw, 25, 2)
             
             # Calcular aceleraciones numéricas a partir de las señales filtradas
             acc_u = np.gradient(u, dt)
@@ -212,8 +212,10 @@ def main():
             # Construir el regresor acoplado para este experimento
             Phi_exp, Tau_exp = build_global_phi_tau(acc_u, acc_v, acc_r, u, v, r, Tu_arr, Tr_arr)
             
-            Phi_global.append(Phi_exp)
-            Tau_global.append(Tau_exp)
+            # Excluimos experiment_01.mat de la regresión conjunta por ser solo ruido
+            if mat_file != "experiment_01.mat":
+                Phi_global.append(Phi_exp)
+                Tau_global.append(Tau_exp)
             
             # Guardar datos para posterior simulación y graficación
             t_arr = mat_data["t"].flatten() if "t" in mat_data else np.arange(N_samples) * dt
@@ -223,6 +225,9 @@ def main():
                 "u_raw": u_raw,
                 "v_raw": v_raw,
                 "r_raw": r_raw,
+                "u_filt": u,
+                "v_filt": v,
+                "r_filt": r,
                 "Tu": Tu_arr,
                 "Tr": Tr_arr
             })
@@ -235,10 +240,10 @@ def main():
     Phi_global = np.vstack(Phi_global)
     Tau_global = np.concatenate(Tau_global)
     
-    print(f"\nTamaño de la matriz de Regresión Global Phi: {Phi_global.shape}")
+    print(f"\nTamaño de la matriz de Regresión Global Phi (excluyendo exp_01): {Phi_global.shape}")
     print("--- Ejecutando Mínimos Cuadrados Globales (OLS) ---")
     
-    # Inversión de matriz OLS idéntica a tu (theta = Phi \ Tau)
+    # Inversión de matriz OLS (theta = Phi \ Tau)
     theta_ols, _, _, _ = np.linalg.lstsq(Phi_global, Tau_global, rcond=None)
     
     param_names = ['m-Xdu', 'm-Ydv', 'Iz-Ndr', 'Xu', 'Xuu', 'Yv', 'Yvv', 'Nr', 'Nrr', 'Yr', 'Yrr', 'Yur']
@@ -253,8 +258,9 @@ def main():
     
     # Límites físicos para evitar inestabilidad (m11, m22, m33, Xu, Yv, Nr >= 1.0; Xuu, Yvv, Nrr >= 0.0)
     # Yr, Yrr, Yur son acoplamientos y pueden ser positivos o negativos.
-    lb = [20.0, 20.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1000.0, -1000.0, -1000.0]
-    ub = [400.0, 500.0, 120.0, 300.0, 500.0, 700.0, 300.0, 250.0, 120.0, 1000.0, 1000.0, 1000.0]
+    # Usamos cotas realistas para un bote de ~30kg físicos.
+    lb = [20.0, 30.0, 5.0, 1.0, 0.0, 50.0, 0.0, 1.0, 0.0, -500.0, -200.0, -500.0]
+    ub = [150.0, 150.0, 50.0, 150.0, 150.0, 300.0, 100.0, 150.0, 100.0, 500.0, 200.0, 500.0]
     
     res = lsq_linear(Phi_global, Tau_global, bounds=(lb, ub))
     theta = res.x
