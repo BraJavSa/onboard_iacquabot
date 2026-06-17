@@ -104,6 +104,8 @@ def build_global_phi_tau(acc_u, acc_v, acc_r, u, v, r, Tu, Tr):
         
         # ---- Fila Yaw (Ecuación 3) ----
         row_r = np.zeros(12)
+        row_r[0] = -u[k] * v[k]      # m11 (Coriolis)
+        row_r[1] = u[k] * v[k]       # m22 (Coriolis)
         row_r[2] = acc_r[k]          # Iz - Ndr (Inercia)
         row_r[7] = r[k]              # Nr (Damp lineal)
         row_r[8] = abs(r[k]) * r[k]  # Nrr (Damp cuadrático)
@@ -131,7 +133,7 @@ def simulate_vessel(t, u, v, r, Tu, Tr, theta):
         # Modelo 3DOF Fossen acoplado con términos de acoplamiento en sway (v)
         du = (tau_u + m22 * v_ * r_ - Xu * u_ - Xuu * abs(u_) * u_) / m11
         dv = (-Yv * v_ - Yvv * abs(v_) * v_ - Yr * r_ - Yrr * abs(r_) * r_ - Yur * u_ * r_) / m22
-        dr = (tau_r - Nr * r_ - Nrr * abs(r_) * r_) / m33
+        dr = (tau_r - (m22 - m11) * u_ * v_ - Nr * r_ - Nrr * abs(r_) * r_) / m33
         
         return [du, dv, dr]
         
