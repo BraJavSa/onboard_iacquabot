@@ -80,35 +80,47 @@ def build_global_phi_tau(acc_u, acc_v, acc_r, u, v, r, Tu, Tr):
     Phi_list = []
     Tau_list = []
     
+    # theta index:
+    # 0: m11, 1: m22, 2: m33
+    # 3: Xu, 4: Xuu
+    # 5: Yv, 6: Yvv, 7: Yvr, 8: Yr, 9: Yrv, 10: Yrr, 11: Yur
+    # 12: Nv, 13: Nvv, 14: Nvr, 15: Nr, 16: Nrv, 17: Nrr
+    
     for k in range(N):
         # ---- Fila Surge (Ecuación 1) ----
-        row_u = np.zeros(12)
-        row_u[0] = acc_u[k]          # m - Xdu
-        row_u[1] = -v[k] * r[k]      # m - Ydv
+        row_u = np.zeros(18)
+        row_u[0] = acc_u[k]          # m11
+        row_u[1] = -v[k] * r[k]      # m22 (Coriolis)
         row_u[3] = u[k]              # Xu
         row_u[4] = abs(u[k]) * u[k]  # Xuu
         Phi_list.append(row_u)
         Tau_list.append(Tu[k])
         
         # ---- Fila Sway (Ecuación 2) ----
-        row_v = np.zeros(12)
-        row_v[0] = 0.0               # Se elimina el término Coriolis separado para evitar colinealidad exacta con Yur
-        row_v[1] = acc_v[k]          # m - Ydv (Inercia)
+        row_v = np.zeros(18)
+        row_v[0] = u[k] * r[k]       # m11 (Coriolis)
+        row_v[1] = acc_v[k]          # m22 (Inercia)
         row_v[5] = v[k]              # Yv (Damp lineal)
         row_v[6] = abs(v[k]) * v[k]  # Yvv (Damp cuadrático)
-        row_v[9] = r[k]              # Yr (Coupling lineal yaw)
+        row_v[7] = abs(r[k]) * v[k]  # Yvr
+        row_v[8] = r[k]              # Yr (Coupling lineal yaw)
+        row_v[9] = abs(v[k]) * r[k]  # Yrv
         row_v[10] = abs(r[k]) * r[k] # Yrr (Coupling cuadrático yaw)
-        row_v[11] = u[k] * r[k]      # Yur (Coupling neto que engloba Coriolis y Yur)
+        row_v[11] = u[k] * r[k]      # Yur (Coupling surge-yaw)
         Phi_list.append(row_v)
-        Tau_list.append(0.0)         # Tv es fijos en 0 por diseño
+        Tau_list.append(0.0)         # Tv es fijo en 0
         
         # ---- Fila Yaw (Ecuación 3) ----
-        row_r = np.zeros(12)
+        row_r = np.zeros(18)
         row_r[0] = -u[k] * v[k]      # m11 (Coriolis)
         row_r[1] = u[k] * v[k]       # m22 (Coriolis)
-        row_r[2] = acc_r[k]          # Iz - Ndr (Inercia)
-        row_r[7] = r[k]              # Nr (Damp lineal)
-        row_r[8] = abs(r[k]) * r[k]  # Nrr (Damp cuadrático)
+        row_r[2] = acc_r[k]          # m33 (Inercia)
+        row_r[12] = v[k]             # Nv
+        row_r[13] = abs(v[k]) * v[k] # Nvv
+        row_r[14] = abs(r[k]) * v[k] # Nvr
+        row_r[15] = r[k]             # Nr (Damp lineal)
+        row_r[16] = abs(v[k]) * r[k] # Nrv
+        row_r[17] = abs(r[k]) * r[k] # Nrr (Damp cuadrático)
         Phi_list.append(row_r)
         Tau_list.append(Tr[k])
         
@@ -118,8 +130,7 @@ def build_global_phi_tau(acc_u, acc_v, acc_r, u, v, r, Tu, Tr):
 # 2.5. SIMULACIÓN Y EVALUACIÓN DE MÉTRICAS DE ERROR
 # =============================================================================
 def simulate_vessel(t, u, v, r, Tu, Tr, theta):
-    # theta: [m-Xdu, m-Ydv, Iz-Ndr, Xu, Xuu, Yv, Yvv, Nr, Nrr, Yr, Yrr, Yur]
-    m11, m22, m33, Xu, Xuu, Yv, Yvv, Nr, Nrr, Yr, Yrr, Yur = theta
+    m11, m22, m33, Xu, Xuu, Yv, Yvv, Yvr, Yr, Yrv, Yrr, Yur, Nv, Nvv, Nvr, Nr, Nrv, Nrr = theta
     
     # Interpoladores para fuerzas Tu y torque Tr de entrada
     Tu_fn = interp1d(t, Tu, bounds_error=False, fill_value="extrapolate")
@@ -130,10 +141,12 @@ def simulate_vessel(t, u, v, r, Tu, Tr, theta):
         tau_u = float(Tu_fn(tt))
         tau_r = float(Tr_fn(tt))
         
-        # Modelo 3DOF Fossen acoplado con términos de acoplamiento en sway (v)
+        # Modelo 3DOF Fossen acoplado con términos de acoplamiento en sway y yaw
         du = (tau_u + m22 * v_ * r_ - Xu * u_ - Xuu * abs(u_) * u_) / m11
-        dv = (-Yv * v_ - Yvv * abs(v_) * v_ - Yr * r_ - Yrr * abs(r_) * r_ - Yur * u_ * r_) / m22
-        dr = (tau_r - (m22 - m11) * u_ * v_ - Nr * r_ - Nrr * abs(r_) * r_) / m33
+        
+        dv = (-m11 * u_ * r_ - Yv * v_ - Yvv * abs(v_) * v_ - Yvr * abs(r_) * v_ - Yr * r_ - Yrv * abs(v_) * r_ - Yrr * abs(r_) * r_ - Yur * u_ * r_) / m22
+        
+        dr = (tau_r - (m22 - m11) * u_ * v_ - Nv * v_ - Nvv * abs(v_) * v_ - Nvr * abs(r_) * v_ - Nr * r_ - Nrv * abs(v_) * r_ - Nrr * abs(r_) * r_) / m33
         
         return [du, dv, dr]
         
@@ -248,7 +261,12 @@ def main():
     # Inversión de matriz OLS (theta = Phi \ Tau)
     theta_ols, _, _, _ = np.linalg.lstsq(Phi_global, Tau_global, rcond=None)
     
-    param_names = ['m-Xdu', 'm-Ydv', 'Iz-Ndr', 'Xu', 'Xuu', 'Yv', 'Yvv', 'Nr', 'Nrr', 'Yr', 'Yrr', 'Yur']
+    param_names = [
+        'm11', 'm22', 'm33',
+        'Xu', 'Xuu',
+        'Yv', 'Yvv', 'Yvr', 'Yr', 'Yrv', 'Yrr', 'Yur',
+        'Nv', 'Nvv', 'Nvr', 'Nr', 'Nrv', 'Nrr'
+    ]
     
     print("\n================ PARÁMETROS IDENTIFICADOS (OLS UNCONSTRAINED) ================")
     for i, name in enumerate(param_names):
@@ -261,8 +279,8 @@ def main():
     # Límites físicos para evitar inestabilidad (m11, m22, m33, Xu, Yv, Nr >= 1.0; Xuu, Yvv, Nrr >= 0.0)
     # Yr, Yrr, Yur son acoplamientos y pueden ser positivos o negativos.
     # Usamos cotas realistas para un bote de ~30kg físicos.
-    lb = [20.0, 30.0, 5.0, 1.0, 0.0, 50.0, 0.0, 1.0, 0.0, -500.0, -200.0, -500.0]
-    ub = [150.0, 150.0, 50.0, 150.0, 150.0, 300.0, 100.0, 150.0, 100.0, 500.0, 200.0, 500.0]
+    lb = [20.0, 30.0, 5.0, 1.0, 0.0, 50.0, 0.0, -150.0, -150.0, -150.0, -150.0, -500.0, -150.0, -150.0, -150.0, 1.0, -150.0, 0.0]
+    ub = [150.0, 150.0, 50.0, 150.0, 150.0, 300.0, 150.0, 150.0, 150.0, 150.0, 150.0, 500.0, 150.0, 150.0, 150.0, 150.0, 150.0, 150.0]
     
     res = lsq_linear(Phi_global, Tau_global, bounds=(lb, ub))
     theta = res.x
