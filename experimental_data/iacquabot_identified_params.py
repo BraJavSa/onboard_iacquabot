@@ -1,4 +1,5 @@
-# Parámetros de Fossen identificados globalmente con restricciones de estabilidad, velocidad y acoplamiento en sway
+# Globally identified Fossen parameters with stability, velocity and coupling bounds in sway
+import numpy as np
 m11 = 124.7541574385;
 m22 = 75.3375752649;
 m33 = 23.7138322095;
