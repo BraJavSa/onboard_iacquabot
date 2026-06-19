@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 """
-Step 1: Bounded Least Squares Identification.
-This script estimates the initial 18 hydrodynamic parameters of the Fossen 3-DOF model 
-for the iacquabot USV using joint linear regression (ordinary and bounded least squares) 
-across multiple experimental datasets.
+Step 1: Bounded Least Squares Identification (9-parameter model).
+Estimates the 9 hydrodynamic parameters of the diagonal Fossen 3-DOF model for the iacquabot USV.
 """
 import os
 import json
 import numpy as np
 from scipy.io import loadmat
 from scipy.signal import savgol_filter
-from scipy.integrate import solve_ivp
-from scipy.interpolate import interp1d
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 from scipy.optimize import lsq_linear
 
 MOTOR_TEMPLATE = {
@@ -29,10 +22,10 @@ MOTOR_TEMPLATE = {
     "pwm_max": 1900,
     "motor_inverted": [True, True, False, False],
     "positions_yx": [
-        [-0.35, 0.40],
-        [0.35, 0.40],
-        [-0.35, -0.50],
-        [0.35, -0.50],
+        [-0.3, 0.40],
+        [0.3, 0.40],
+        [-0.3, -0.50],
+        [0.3, -0.50],
     ],
     "angles_deg": [0.0, 0.0, 0.0, 0.0],
 }
@@ -43,6 +36,8 @@ y_coords = [
     MOTOR_TEMPLATE["positions_yx"][2][0],
     MOTOR_TEMPLATE["positions_yx"][0][0],
 ]
+
+PARAM_NAMES = ['m11', 'm22', 'm33', 'Xu', 'Xuu', 'Yv', 'Yvv', 'Nr', 'Nrr']
 
 def pwm_to_thrust_forces(pwm1, pwm2, pwm3, pwm4):
     pwms = [pwm1, pwm2, pwm3, pwm4]
@@ -69,68 +64,91 @@ def build_global_phi_tau(acc_u, acc_v, acc_r, u, v, r, Tu, Tr):
     Phi_list = []
     Tau_list = []
     for k in range(N):
-        row_u = np.zeros(18)
-        row_u[0] = acc_u[k]
-        row_u[1] = -v[k] * r[k]
-        row_u[3] = u[k]
-        row_u[4] = abs(u[k]) * u[k]
+        row_u = np.zeros(9)
+        row_u[0] = acc_u[k]       # m11
+        row_u[1] = -v[k] * r[k]   # m22
+        row_u[3] = u[k]           # Xu
+        row_u[4] = abs(u[k]) * u[k] # Xuu
         Phi_list.append(row_u)
         Tau_list.append(Tu[k])
 
-        row_v = np.zeros(18)
-        row_v[0] = u[k] * r[k]
-        row_v[1] = acc_v[k]
-        row_v[5] = v[k]
-        row_v[6] = abs(v[k]) * v[k]
-        row_v[7] = abs(r[k]) * v[k]
-        row_v[8] = r[k]
-        row_v[9] = abs(v[k]) * r[k]
-        row_v[10] = abs(r[k]) * r[k]
-        row_v[11] = u[k] * r[k]
+        row_v = np.zeros(9)
+        row_v[0] = u[k] * r[k]    # m11
+        row_v[1] = acc_v[k]       # m22
+        row_v[5] = v[k]           # Yv
+        row_v[6] = abs(v[k]) * v[k] # Yvv
         Phi_list.append(row_v)
         Tau_list.append(0.0)
 
-        row_r = np.zeros(18)
-        row_r[0] = -u[k] * v[k]
-        row_r[1] = u[k] * v[k]
-        row_r[2] = acc_r[k]
-        row_r[12] = v[k]
-        row_r[13] = abs(v[k]) * v[k]
-        row_r[14] = abs(r[k]) * v[k]
-        row_r[15] = r[k]
-        row_r[16] = abs(v[k]) * r[k]
-        row_r[17] = abs(r[k]) * r[k]
+        row_r = np.zeros(9)
+        row_r[0] = -u[k] * v[k]   # m11
+        row_r[1] = u[k] * v[k]    # m22
+        row_r[2] = acc_r[k]       # m33
+        row_r[7] = r[k]           # Nr
+        row_r[8] = abs(r[k]) * r[k] # Nrr
         Phi_list.append(row_r)
         Tau_list.append(Tr[k])
     return np.array(Phi_list), np.array(Tau_list)
 
-def simulate_vessel(t, u, v, r, Tu, Tr, theta):
-    m11, m22, m33, Xu, Xuu, Yv, Yvv, Yvr, Yr, Yrv, Yrr, Yur, Nv, Nvv, Nvr, Nr, Nrv, Nrr = theta
-    Tu_fn = interp1d(t, Tu, bounds_error=False, fill_value="extrapolate")
-    Tr_fn = interp1d(t, Tr, bounds_error=False, fill_value="extrapolate")
-    def ode_system(tt, state):
-        u_, v_, r_ = state
-        tau_u = float(Tu_fn(tt))
-        tau_r = float(Tr_fn(tt))
-        du = (tau_u + m22 * v_ * r_ - Xu * u_ - Xuu * abs(u_) * u_) / m11
-        dv = (-m11 * u_ * r_ - Yv * v_ - Yvv * abs(v_) * v_ - Yvr * abs(r_) * v_ - Yr * r_ - Yrv * abs(v_) * r_ - Yrr * abs(r_) * r_ - Yur * u_ * r_) / m22
-        dr = (tau_r - (m22 - m11) * u_ * v_ - Nv * v_ - Nvv * abs(v_) * v_ - Nvr * abs(r_) * v_ - Nr * r_ - Nrv * abs(v_) * r_ - Nrr * abs(r_) * r_) / m33
-        return [du, dv, dr]
-    sol = solve_ivp(
-        ode_system,
-        [t[0], t[-1]],
-        [u[0], v[0], r[0]],
-        t_eval=t,
-        method="RK45",
-        rtol=1e-5,
-        atol=1e-5
-    )
-    return sol.y[0], sol.y[1], sol.y[2]
+def rk4_integrate(t, u0, v0, r0, Tu, Tr, dynamic):
+    N = len(t)
+    u_sim = np.zeros(N)
+    v_sim = np.zeros(N)
+    r_sim = np.zeros(N)
+    u_sim[0], v_sim[0], r_sim[0] = u0, v0, r0
+    m11 = dynamic["m11"]
+    m22 = dynamic["m22"]
+    m33 = dynamic["m33"]
+    Xu = dynamic["Xu"]
+    Xuu = dynamic["Xuu"]
+    Yv = dynamic["Yv"]
+    Yvv = dynamic["Yvv"]
+    Nr = dynamic["Nr"]
+    Nrr = dynamic["Nrr"]
+    for k in range(N - 1):
+        dt = t[k+1] - t[k]
+        uk, vk, rk = u_sim[k], v_sim[k], r_sim[k]
+        tu1, tr1 = Tu[k], Tr[k]
+        du1 = (tu1 + m22 * vk * rk - Xu * uk - Xuu * abs(uk) * uk) / m11
+        dv1 = (-m11 * uk * rk - Yv * vk - Yvv * abs(vk) * vk) / m22
+        dr1 = (tr1 - (m22 - m11) * uk * vk - Nr * rk - Nrr * abs(rk) * rk) / m33
+        
+        u2 = uk + 0.5 * dt * du1
+        v2 = vk + 0.5 * dt * dv1
+        r2 = rk + 0.5 * dt * dr1
+        tu2 = 0.5 * (Tu[k] + Tu[k+1])
+        tr2 = 0.5 * (Tr[k] + Tr[k+1])
+        du2 = (tu2 + m22 * v2 * r2 - Xu * u2 - Xuu * abs(u2) * u2) / m11
+        dv2 = (-m11 * u2 * r2 - Yv * v2 - Yvv * abs(v2) * v2) / m22
+        dr2 = (tr2 - (m22 - m11) * u2 * v2 - Nr * r2 - Nrr * abs(r2) * r2) / m33
+        
+        u3 = uk + 0.5 * dt * du2
+        v3 = vk + 0.5 * dt * dv2
+        r3 = rk + 0.5 * dt * dr2
+        du3 = (tu2 + m22 * v3 * r3 - Xu * u3 - Xuu * abs(u3) * u3) / m11
+        dv3 = (-m11 * u3 * r3 - Yv * v3 - Yvv * abs(v3) * v3) / m22
+        dr3 = (tr2 - (m22 - m11) * u3 * v3 - Nr * r3 - Nrr * abs(r3) * r3) / m33
+        
+        u4 = uk + dt * du3
+        v4 = vk + dt * dv3
+        r4 = rk + dt * dr3
+        tu4, tr4 = Tu[k+1], Tr[k+1]
+        du4 = (tu4 + m22 * v4 * r4 - Xu * u4 - Xuu * abs(u4) * u4) / m11
+        dv4 = (-m11 * u4 * r4 - Yv * v4 - Yvv * abs(v4) * v4) / m22
+        dr4 = (tr4 - (m22 - m11) * u4 * v4 - Nr * r4 - Nrr * abs(r4) * r4) / m33
+        
+        u_sim[k+1] = uk + (dt / 6.0) * (du1 + 2.0*du2 + 2.0*du3 + du4)
+        v_sim[k+1] = vk + (dt / 6.0) * (dv1 + 2.0*dv2 + 2.0*dv3 + dv4)
+        r_sim[k+1] = rk + (dt / 6.0) * (dr1 + 2.0*dr2 + 2.0*dr3 + dr4)
+        
+        if not (np.isfinite(u_sim[k+1]) and np.isfinite(v_sim[k+1]) and np.isfinite(r_sim[k+1])):
+            raise RuntimeError("Integration diverged")
+    return u_sim, v_sim, r_sim
 
 def compute_metrics(y_real, y_sim):
     rms_val = float(np.sqrt(np.mean((y_real - y_sim)**2)))
-    r2_val = float(1.0 - np.sum((y_real - y_sim)**2) / (np.sum((y_real - np.mean(y_real))**2) + 1e-8))
-    return rms_val, r2_val
+    mae_val = float(np.mean(np.abs(y_real - y_sim)))
+    return rms_val, mae_val
 
 def main():
     FS = 30.0
@@ -143,9 +161,6 @@ def main():
     Phi_global = []
     Tau_global = []
     experiments_data = []
-    print("\n--- ANALYZING NATIVE DYNAMIC RANGE (FLU) ---")
-    print(f"{'Experiment':<18} | {'Max |u|':<10} | {'Max |v|':<10} | {'Max |r|':<10} | {'Max |Tr|':<10}")
-    print("-" * 65)
     for mat_file in valid_mats:
         try:
             mat_data = loadmat(mat_file)
@@ -167,7 +182,6 @@ def main():
             Tr_arr = np.zeros(N_samples)
             for i in range(N_samples):
                 Tu_arr[i], Tr_arr[i] = pwm_to_thrust_forces(pwm1[i], pwm2[i], pwm3[i], pwm4[i])
-            print(f"{mat_file:<18} | {np.max(np.abs(u)):.4f}     | {np.max(np.abs(v)):.4f}     | {np.max(np.abs(r)):.4f}     | {np.max(np.abs(Tr_arr)):.4f}")
             Phi_exp, Tau_exp = build_global_phi_tau(acc_u, acc_v, acc_r, u, v, r, Tu_arr, Tr_arr)
             if mat_file not in ["experiment_01.mat", "experiment_02.mat"]:
                 Phi_global.append(Phi_exp)
@@ -193,53 +207,32 @@ def main():
     print(f"\nGlobal Regression Matrix Phi shape (excluding exp_01 and exp_02): {Phi_global.shape}")
     print("--- Running Ordinary Least Squares (OLS) ---")
     theta_ols, _, _, _ = np.linalg.lstsq(Phi_global, Tau_global, rcond=None)
-    param_names = [
-        'm11', 'm22', 'm33',
-        'Xu', 'Xuu',
-        'Yv', 'Yvv', 'Yvr', 'Yr', 'Yrv', 'Yrr', 'Yur',
-        'Nv', 'Nvv', 'Nvr', 'Nr', 'Nrv', 'Nrr'
-    ]
-    print("\n================ IDENTIFIED PARAMETERS (OLS UNCONSTRAINED) ================")
-    for i, name in enumerate(param_names):
+    print("\n================ IDENTIFIED PARAMETERS (OLS UNCONSTRAINED 9-PARAM) ================")
+    for i, name in enumerate(PARAM_NAMES):
         print(f" {name:<8}: {theta_ols[i]:.6f}")
-    print("==============================================================================")
-    dynamic_ols = {name: float(theta_ols[i]) for i, name in enumerate(param_names)}
-    dynamic_ols["model"] = "Fossen 3DOF 18-parameter OLS (Unconstrained)"
-    with open("identified_dynamics_ols.json", "w") as f:
-        json.dump(dynamic_ols, f, indent=4)
-    print("OLS parameters saved to 'identified_dynamics_ols.json'!")
+    print("===================================================================================")
+    dynamic_ols = {name: float(theta_ols[i]) for i, name in enumerate(PARAM_NAMES)}
+    dynamic_ols["model"] = "Fossen 3DOF 9-parameter OLS (Unconstrained)"
+    
     print("\n--- Running Bounded Least Squares (lsq_linear) ---")
-    lb = [20.0, 30.0, 5.0, 1.0, 0.0, 50.0, 0.0, -150.0, -150.0, -150.0, -150.0, -500.0, -150.0, -150.0, -150.0, 1.0, -150.0, 0.0]
-    ub = [150.0, 150.0, 50.0, 150.0, 150.0, 300.0, 150.0, 150.0, 150.0, 150.0, 150.0, 500.0, 150.0, 150.0, 150.0, 150.0, 150.0, 150.0]
+    lb = [20.0, 30.0, 5.0, 1.0, 1.0, 50.0, 5.0, 1.0, 1.0]
+    ub = [150.0, 150.0, 50.0, 150.0, 150.0, 300.0, 150.0, 150.0, 150.0]
     res = lsq_linear(Phi_global, Tau_global, bounds=(lb, ub))
     theta = res.x
-    print("\n================ FINAL IDENTIFIED PARAMETERS (BOUNDED LSTSQ) ================")
-    for i, name in enumerate(param_names):
-        print(f" {name:<8}: {theta[i]:.6f}")
-    print("==================================================================================")
-    output_py_file = "iacquabot_identified_params.py"
-    with open(output_py_file, "w") as f:
-        f.write("# Globally identified Fossen parameters with stability, velocity and coupling bounds in sway\n")
-        f.write("import numpy as np\n")
-        for i, name in enumerate(param_names):
-            clean_name = name.replace("-", "")
-            f.write(f"{clean_name} = {theta[i]:.10f};\n")
-        f.write(f"\ntheta = {list(theta)}\n")
-    print(f"\nParameters successfully saved to '{output_py_file}'!")
-    dynamic_bounded = {name: float(theta[i]) for i, name in enumerate(param_names)}
-    dynamic_bounded["model"] = "Fossen 3DOF 18-parameter (Bounded Least Squares)"
-    with open("identified_dynamics.json", "w") as f:
+    print("\n================ FINAL IDENTIFIED PARAMETERS (BOUNDED LSTSQ 9-PARAM) ================")
+    for i, name in enumerate(PARAM_NAMES):
+         print(f" {name:<8}: {theta[i]:.6f}")
+    print("=====================================================================================")
+    dynamic_bounded = {name: float(theta[i]) for i, name in enumerate(PARAM_NAMES)}
+    dynamic_bounded["model"] = "Fossen 3DOF 9-parameter (Bounded Least Squares)"
+    with open("identified_dynamics_step1.json", "w") as f:
         json.dump(dynamic_bounded, f, indent=4)
-    print("Bounded LSTSQ parameters saved to 'identified_dynamics.json'!")
-    with open("identified_motors.json", "w") as f:
-        json.dump(MOTOR_TEMPLATE, f, indent=4)
-    print("Motor parameters saved to 'identified_motors.json'!")
-    print("\n--- RUNNING SIMULATION AND ERROR METRICS EVALUATION (BOUNDED LSTSQ) ---")
+    print("Bounded LSTSQ parameters saved to 'identified_dynamics_step1.json'!")
+    
+    print("\n--- EVALUATING VALIDATION METRICS ---")
     print(f"{'Experiment':<18} | {'Surge (u)':<17} | {'Sway (v)':<17} | {'Yaw (r)':<17}")
-    print(f"{'':<18} | {'RMS':<7} {'R2':<8} | {'RMS':<7} {'R2':<8} | {'RMS':<7} {'R2':<8}")
+    print(f"{'':<18} | {'RMS':<7} {'MAE':<8} | {'RMS':<7} {'MAE':<8} | {'RMS':<7} {'MAE':<8}")
     print("-" * 78)
-    num_exps = len(experiments_data)
-    fig, axes = plt.subplots(num_exps, 3, figsize=(15, 2.5 * num_exps), squeeze=False)
     metrics_dict = {}
     for idx, exp in enumerate(experiments_data):
         try:
@@ -247,50 +240,22 @@ def main():
             u_real = exp["u_raw"]
             v_real = exp["v_raw"]
             r_real = exp["r_raw"]
-            u_sim, v_sim, r_sim = simulate_vessel(t_exp, u_real, v_real, r_real, exp["Tu"], exp["Tr"], theta)
-            rms_u, r2_u = compute_metrics(u_real, u_sim)
-            rms_v, r2_v = compute_metrics(v_real, v_sim)
-            rms_r, r2_r = compute_metrics(r_real, r_sim)
-            print(f"{exp['name']:<18} | {rms_u:.4f}  {r2_u:>7.3f} | {rms_v:.4f}  {r2_v:>7.3f} | {rms_r:.4f}  {r2_r:>7.3f}")
+            theta_dict = {name: float(theta[i]) for i, name in enumerate(PARAM_NAMES)}
+            u_sim, v_sim, r_sim = rk4_integrate(t_exp, u_real[0], v_real[0], r_real[0], exp["Tu"], exp["Tr"], theta_dict)
+            rms_u, mae_u = compute_metrics(u_real, u_sim)
+            rms_v, mae_v = compute_metrics(v_real, v_sim)
+            rms_r, mae_r = compute_metrics(r_real, r_sim)
+            print(f"{exp['name']:<18} | {rms_u:.4f}  {mae_u:>7.4f} | {rms_v:.4f}  {mae_v:>7.4f} | {rms_r:.4f}  {mae_r:>7.4f}")
             metrics_dict[exp["name"]] = {
-                "u": {"rms": rms_u, "r2": r2_u},
-                "v": {"rms": rms_v, "r2": r2_v},
-                "r": {"rms": rms_r, "r2": r2_r}
+                "u": {"rms": rms_u, "mae": mae_u},
+                "v": {"rms": rms_v, "mae": mae_v},
+                "r": {"rms": rms_r, "mae": mae_r}
             }
-            axes[idx, 0].plot(t_exp, u_real, 'k-', alpha=0.5, label='Measured' if idx == 0 else "")
-            axes[idx, 0].plot(t_exp, u_sim, 'b--', label='Model' if idx == 0 else "")
-            if idx == 0:
-                axes[idx, 0].legend(loc='upper right')
-            axes[idx, 0].set_ylabel(f"{exp['name']}\nu [m/s]")
-            axes[idx, 0].grid(True)
-            axes[idx, 0].set_title(f"u (RMS: {rms_u:.3f}, R2: {r2_u:.2f})", fontsize=9)
-            axes[idx, 1].plot(t_exp, v_real, 'k-', alpha=0.5, label='Measured' if idx == 0 else "")
-            axes[idx, 1].plot(t_exp, v_sim, 'g--', label='Model' if idx == 0 else "")
-            if idx == 0:
-                axes[idx, 1].legend(loc='upper right')
-            axes[idx, 1].grid(True)
-            axes[idx, 1].set_title(f"v (RMS: {rms_v:.3f}, R2: {r2_v:.2f})", fontsize=9)
-            axes[idx, 2].plot(t_exp, r_real, 'k-', alpha=0.5, label='Measured' if idx == 0 else "")
-            axes[idx, 2].plot(t_exp, r_sim, 'r--', label='Model' if idx == 0 else "")
-            if idx == 0:
-                axes[idx, 2].legend(loc='upper right')
-            axes[idx, 2].grid(True)
-            axes[idx, 2].set_title(f"r (RMS: {rms_r:.3f}, R2: {r2_r:.2f})", fontsize=9)
-            if idx == num_exps - 1:
-                axes[idx, 0].set_xlabel('Time [s]')
-                axes[idx, 1].set_xlabel('Time [s]')
-                axes[idx, 2].set_xlabel('Time [s]')
         except Exception as e:
             print(f"Error in simulation of {exp['name']}: {e}")
             continue
-    plt.tight_layout()
-    unified_plot_path = "validation_all_experiments.png"
-    plt.savefig(unified_plot_path, dpi=150)
-    plt.close(fig)
-    print(f"\nUnified validation plot saved to '{unified_plot_path}'!")
-    with open("identified_dynamics_metrics.json", "w") as f:
+    with open("identified_dynamics_metrics_step1.json", "w") as f:
         json.dump(metrics_dict, f, indent=4)
-    print("Metrics successfully saved to 'identified_dynamics_metrics.json'!")
 
 if __name__ == "__main__":
     main()
