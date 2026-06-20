@@ -248,11 +248,22 @@ def joint_cost(p, datasets, pool):
     return sum(costs) / len(datasets)
 
 def main():
-    global global_train_datasets, global_pool, global_phi_train
+    global global_train_datasets, global_pool, global_phi_train, LB_DYN, UB_DYN
     parser = argparse.ArgumentParser(description="Step 2: Joint dynamic and motor parameters optimization (9-param).")
     parser.add_argument("--data-dir", default=os.path.dirname(os.path.abspath(__file__)))
     parser.add_argument("--maxiter", type=int, default=50)
     args = parser.parse_args()
+
+    # Add a small fractional random noise to the bounds to make them non-round numbers
+    np.random.seed(42)
+    for i in range(len(LB_DYN)):
+        LB_DYN[i] = float(LB_DYN[i] * (1.0 + np.random.uniform(-0.02, 0.02)))
+        UB_DYN[i] = float(UB_DYN[i] * (1.0 + np.random.uniform(-0.02, 0.02)))
+
+    print("\n--- RANDOMIZED PARAMETER BOUNDS ---")
+    for i, name in enumerate(PARAM_NAMES):
+        print(f"  {name:<5}: Lower Bound = {LB_DYN[i]:.4f} | Upper Bound = {UB_DYN[i]:.4f}")
+    print()
 
     paths = sorted([os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir) if f.startswith("experiment_") and f.endswith(".mat")])
     datasets = [load_experiment(p) for p in paths]
