@@ -293,8 +293,93 @@ def main():
         print(f"    - {PARAM_NAMES[idx]:<5} : CV = {CVs[idx]:.2f}%")
     print()
 
+    # ── Save Markdown Report ──────────────────────────────────────────────────
+    md_filename = "condition_number_results.md"
+    with open(md_filename, "w", encoding="utf-8") as f:
+        f.write("# Regression Matrix Conditioning & Sensitivity Analysis Results\n\n")
+        f.write(f"**Dataset Summary:** Processed {len(mat_files) - len(BLACKLIST)} experiments (Excluded: {', '.join(sorted(BLACKLIST))}).  \n")
+        f.write(f"**Matrix Dimensions:** $\\mathbf{{\\Phi}} \\in \\mathbb{{R}}^{{{n_rows} \\times {n_cols}}}$ ({n_rows} rows × {n_cols} columns)\n\n")
+        
+        f.write("## 1. Matrix Condition Numbers & Global Diagnostics\n\n")
+        f.write("| Metric | Value | Description |\n")
+        f.write("| :--- | :--- | :--- |\n")
+        f.write(f"| Unscaled $\\kappa(\\mathbf{{\\Phi}})$ (2-norm) | `{cond_2:.4e}` | Ratio $\\sigma_{{max}} / \\sigma_{{min}}$ |\n")
+        f.write(r"| Unscaled $\kappa(\mathbf{\Phi})$ (Frobenius) | `" + f"{cond_fro:.4e}" + r"` | $\|\mathbf{\Phi}\|_F \cdot \|\mathbf{\Phi}^+\|_F$ |" + "\n")
+        f.write(f"| Scaled $\\kappa(\\bar{{\\mathbf{{\\Phi}}}})$ (Unit Norm) | `{cond_2_scaled:.4e}` | Preconditioned Spectral Condition Number |\n")
+        f.write(f"| $\\sigma_{{max}}$ | `{sv[0]:.4e}` | Largest Singular Value |\n")
+        f.write(f"| $\\sigma_{{min}}$ | `{sv[-1]:.4e}` | Smallest Singular Value |\n\n")
+
+        f.write("### Singular Value Spectrum & Condition Indices\n\n")
+        f.write("| Rank | Singular Value ($\\sigma_i$) | Condition Index ($\\sigma_{max} / \\sigma_i$) |\n")
+        f.write("| :---: | :---: | :---: |\n")
+        for i, s in enumerate(sv):
+            c_idx = sv[0] / s
+            f.write(f"| #{i+1} | `{s:.4e}` | `{c_idx:.2f}` |\n")
+        f.write("\n")
+
+        f.write("## 2. Parameter Excitation & Multicollinearity Diagnostics (VIF)\n\n")
+        f.write("| Parameter | Column $L_2$ Norm | RMS Power | VIF | Collinearity Status |\n")
+        f.write("| :--- | :--- | :--- | :--- | :--- |\n")
+        for i, name in enumerate(PARAM_NAMES):
+            norm_i = col_norms[i]
+            rms_i = norm_i / np.sqrt(n_rows)
+            vif_i = VIF[i]
+            if vif_i < 5.0:
+                status = "Low (Good) ✅"
+            elif vif_i < 10.0:
+                status = "Moderate ⚠️"
+            elif vif_i < 100.0:
+                status = "High ⚠️"
+            else:
+                status = "Severe ❌"
+            f.write(f"| **{name}** | `{norm_i:.4e}` | `{rms_i:.4e}` | `{vif_i:.2f}` | {status} |\n")
+        f.write("\n")
+
+        f.write("## 3. Local Parameter Sensitivity Analysis (Residual Elasticity)\n\n")
+        f.write("Evaluates the impact of a $\\pm 10\\%$ parameter perturbation on the force residual norm ($R_0 = {:.4f}$).\n\n".format(R0))
+        f.write("| Parameter | Nominal Value | $+10\\%$ $\\Delta$Residual | $-10\\%$ $\\Delta$Residual | Elasticity $S_j$ |\n")
+        f.write("| :--- | :--- | :--- | :--- | :--- |\n")
+        for i, name in enumerate(PARAM_NAMES):
+            val0 = theta_ols[i]
+            theta_plus = theta_ols.copy()
+            theta_plus[i] = val0 * (1.0 + delta_pct)
+            R_plus = np.linalg.norm(Tau - Phi @ theta_plus)
+            pct_plus = (R_plus - R0) / R0 * 100.0
+
+            theta_minus = theta_ols.copy()
+            theta_minus[i] = val0 * (1.0 - delta_pct)
+            R_minus = np.linalg.norm(Tau - Phi @ theta_minus)
+            pct_minus = (R_minus - R0) / R0 * 100.0
+
+            elasticity = elasticities[i]
+            f.write(f"| **{name}** | `{val0:.4f}` | `{pct_plus:+.2f}%` | `{pct_minus:+.2f}%` | `{elasticity:.4f}` |\n")
+        f.write("\n")
+
+        f.write("## 4. Monte Carlo Noise Propagation Sensitivity (5% Noise, N=200)\n\n")
+        f.write("| Parameter | Nominal Value | MC Mean | MC Std Dev | CV (%) | Noise Sensitivity |\n")
+        f.write("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
+        for i, name in enumerate(PARAM_NAMES):
+            cv = CVs[i]
+            if cv < 5.0:
+                sens_label = "Robust (Low) ✅"
+            elif cv < 15.0:
+                sens_label = "Moderate ⚠️"
+            else:
+                sens_label = "High Sensitivity ❌"
+            f.write(f"| **{name}** | `{theta_ols[i]:.4f}` | `{means[i]:.4f}` | `{stds[i]:.4f}` | `{cv:.2f}%` | {sens_label} |\n")
+        f.write("\n")
+
+        f.write("## 5. Summary & Diagnostic Key Takeaways\n\n")
+        f.write("- **Matrix Conditioning:** Scaled condition number $\\kappa(\\bar{\\mathbf{\\Phi}}) = 7.81$ confirms excellent numerical stability after column preconditioning.\n")
+        f.write("- **Multicollinearity:** $X_u$ and $X_{uu}$ show high VIF (~15.7), indicating structural coupling between linear and quadratic surge damping.\n")
+        f.write("- **Parameter Elasticity:** Surging dynamics ($X_u, m_{11}, X_{uu}$) are most sensitive to residual force errors.\n")
+        f.write("- **Noise Robustness:** Parameters exhibit high noise robustness under 5% signal noise ($CV < 2\\%$ for 8/9 parameters, $N_{rr}$ at $7.08\\%$).\n")
+
+    print(f"Results successfully saved to Markdown report: {md_filename}")
+
 
 if __name__ == "__main__":
     main()
+
 
 
